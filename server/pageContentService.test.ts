@@ -1,3 +1,4 @@
+import { convert as convertHtmlToPlainText } from "html-to-text";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { repository, version } from "../package.json" with { type: "json" };
 
@@ -12,6 +13,8 @@ vi.mock("node:dns/promises", () => ({
   default: { lookup: lookupMock },
   lookup: lookupMock,
 }));
+
+vi.mock("html-to-text", { spy: true });
 
 vi.mock("pdf-parse", () => ({
   PDFParse: class {
@@ -64,6 +67,7 @@ ${paragraph("Cats sleep between twelve and sixteen hours a day.")}
 beforeEach(() => {
   scorePassagesMock.mockReset().mockResolvedValue([]);
   fetchMock.mockReset();
+  vi.mocked(convertHtmlToPlainText).mockReset();
   lookupMock.mockReset();
   lookupMock.mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
   pdfGetTextMock.mockReset();
@@ -842,6 +846,19 @@ describe("page read counters", () => {
     ).toEqual({ failed: 1 });
   });
 
+  it("counts an HTML extraction error as unparsable", async () => {
+    respondWithHtml(articlePage);
+    vi.mocked(convertHtmlToPlainText).mockImplementationOnce(() => {
+      throw new Error("HTML extraction failed");
+    });
+
+    expect(
+      (await countOutcomes("https://example.com/article")).skipped,
+    ).toEqual({
+      unparsable: 1,
+    });
+  });
+
   it("counts a page that yielded almost no text", async () => {
     respondWithHtml("<html><body><p>Accept cookies</p></body></html>");
 
@@ -962,17 +979,71 @@ describe("host circuit breaker", () => {
     ).toBe(1);
   });
 
-  it("counts a timeout and a dropped connection toward the box, as an HTTP error does", async () => {
+  it("keeps reading a host after three failed PDF extractions", async () => {
     const breaker = new PageReadHostBreaker(breakerOptions);
+    pdfGetTextMock.mockRejectedValue(new Error("PDF extraction failed"));
+    fetchMock.mockImplementation(async () => {
+      return new Response("%PDF-1.7\n%%EOF", {
+        headers: { "content-type": "application/pdf" },
+      });
+    });
+
+    for (const page of ["a", "b", "c"]) {
+      expect(
+        (await countOutcomes(`https://pdf.example.com/${page}.pdf`, breaker))
+          .skipped,
+      ).toEqual({ unparsable: 1 });
+    }
+    expect(pdfDestroyMock).toHaveBeenCalledTimes(3);
+    expect(breaker.getOpens()).toBe(0);
+
+    respondWithHtml(articlePage);
+    expect(
+      (await countOutcomes("https://pdf.example.com/article", breaker)).read,
+    ).toBe(1);
+  });
+
+  it("counts timeouts, connection failures, and HTTP errors toward the box", async () => {
+    const breaker = new PageReadHostBreaker({
+      ...breakerOptions,
+      failureThreshold: 4,
+    });
     const timeout = new Error("The operation was aborted due to timeout");
     timeout.name = "TimeoutError";
 
     fetchMock.mockRejectedValue(timeout);
-    await countOutcomes("https://slow.example.com/a", breaker);
+    expect(
+      (await countOutcomes("https://slow.example.com/a", breaker)).skipped,
+    ).toEqual({ timedOut: 1 });
+
     fetchMock.mockRejectedValue(new TypeError("fetch failed"));
-    await countOutcomes("https://slow.example.com/b", breaker);
+    expect(
+      (await countOutcomes("https://slow.example.com/b", breaker)).skipped,
+    ).toEqual({ failed: 1 });
+
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("partial PDF"));
+      },
+      pull(controller) {
+        controller.error(new TypeError("connection dropped"));
+      },
+    });
+    fetchMock.mockResolvedValue(
+      new Response(body, {
+        headers: { "content-type": "application/pdf" },
+      }),
+    );
+    expect(
+      (await countOutcomes("https://slow.example.com/c.pdf", breaker)).skipped,
+    ).toEqual({ failed: 1 });
+    expect(pdfGetTextMock).not.toHaveBeenCalled();
+
     refuse(503);
-    await countOutcomes("https://slow.example.com/c", breaker);
+    expect(
+      (await countOutcomes("https://slow.example.com/server-error", breaker))
+        .skipped,
+    ).toEqual({ httpOtherError: 1 });
 
     respondWithHtml(articlePage);
     expect(

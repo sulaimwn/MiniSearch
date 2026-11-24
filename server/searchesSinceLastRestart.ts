@@ -184,6 +184,8 @@ export function getUnresponsiveEngineStats() {
 
 let textualSearchMs = 0;
 let graphicalSearchMs = 0;
+let timedTextualSearches = 0;
+let timedGraphicalSearches = 0;
 let thumbnailsRequested = 0;
 let thumbnailsDropped = 0;
 let thumbnailsBlocked = 0;
@@ -193,8 +195,13 @@ export function recordSearchDuration(
   searchType: SearchType,
   durationMs: number,
 ): void {
-  if (searchType === "text") textualSearchMs += durationMs;
-  else graphicalSearchMs += durationMs;
+  if (searchType === "text") {
+    textualSearchMs += durationMs;
+    timedTextualSearches++;
+  } else {
+    graphicalSearchMs += durationMs;
+    timedGraphicalSearches++;
+  }
 }
 
 export function recordThumbnailRequested(): void {
@@ -217,11 +224,9 @@ export function recordThumbnailBlocked(): void {
 
 export function getSearchStats() {
   return {
-    averageTextualMs: Math.round(
-      textualSearchMs / textualSearchesSinceLastRestart || 0,
-    ),
+    averageTextualMs: Math.round(textualSearchMs / timedTextualSearches || 0),
     averageGraphicalMs: Math.round(
-      graphicalSearchMs / graphicalSearchesSinceLastRestart || 0,
+      graphicalSearchMs / timedGraphicalSearches || 0,
     ),
   };
 }

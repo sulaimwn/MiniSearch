@@ -15,6 +15,7 @@ export type PageReadOutcome =
   | "redirectLimit"
   | "timedOut"
   | "tooLittleText"
+  | "unparsable"
   | "failed";
 
 /**
@@ -39,6 +40,7 @@ const outcomes: Record<PageReadOutcome, number> = {
   redirectLimit: 0,
   timedOut: 0,
   tooLittleText: 0,
+  unparsable: 0,
   failed: 0,
 };
 

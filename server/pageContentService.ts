@@ -522,19 +522,22 @@ async function readHop(url: URL, deadline: AbortSignal): Promise<HopResult> {
   }
 
   const contentType = response.headers.get("content-type") ?? "";
-  if (!READABLE_CONTENT_TYPES.test(contentType.trim())) {
-    if (!contentType.trim().toLowerCase().startsWith("application/pdf")) {
-      await response.body?.cancel().catch(() => {});
-      return { outcome: "notADocument" };
-    }
+  const isPdf = contentType.trim().toLowerCase().startsWith("application/pdf");
+  if (!READABLE_CONTENT_TYPES.test(contentType.trim()) && !isPdf) {
+    await response.body?.cancel().catch(() => {});
+    return { outcome: "notADocument" };
   }
 
+  let body: Awaited<ReturnType<typeof readCappedBytes>>;
   try {
-    const { bytes, truncated } = await readCappedBytes(
-      response,
-      MAX_RESPONSE_BYTES,
-    );
-    if (contentType.trim().toLowerCase().startsWith("application/pdf")) {
+    body = await readCappedBytes(response, MAX_RESPONSE_BYTES);
+  } catch (error) {
+    return { outcome: isTimeout(error) ? "timedOut" : "failed" };
+  }
+
+  const { bytes, truncated } = body;
+  try {
+    if (isPdf) {
       return {
         outcome: "ok",
         text: await extractPdfText(bytes),
@@ -546,8 +549,8 @@ async function readHop(url: URL, deadline: AbortSignal): Promise<HopResult> {
       html: decodeDocument(bytes, contentType),
       bodyTruncated: truncated,
     };
-  } catch (error) {
-    return { outcome: isTimeout(error) ? "timedOut" : "failed" };
+  } catch {
+    return { outcome: "unparsable" };
   }
 }
 
@@ -1189,8 +1192,8 @@ async function fetchPageContent(
     };
   } catch {
     recordPageRead({
-      outcome: "failed",
-      durationMs: performance.now() - startedAt,
+      outcome: "unparsable",
+      durationMs: since(),
       bodyTruncated,
     });
     return null;
