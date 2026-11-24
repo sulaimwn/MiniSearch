@@ -389,6 +389,9 @@ this limit set where it should be", not "who read what":
 | `bodiesTruncated`          | Is the 1.5 MB body cap biting                                                                                                                                                   |
 | `excerptKeptRate`          | How much of a page the per-URL cap and dedup keep                                                                                                                               |
 
+A PDF that hits the body cap and then fails to parse increments both
+`bodiesTruncated` and `skipped.unparsable`.
+
 A counter can only be read in aggregate, so a single search cannot be recovered
 from it. The weakest point is an instance nobody else is using, where one search
 moves the numbers on its own; that reveals how many pages were read and how they

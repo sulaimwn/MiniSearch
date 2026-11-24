@@ -485,7 +485,10 @@ function isTimeout(error: unknown): boolean {
 
 type DownloadResult =
   | { outcome: "ok"; html?: string; text?: string; bodyTruncated: boolean }
-  | { outcome: Exclude<PageReadOutcome, "read" | "tooLittleText"> };
+  | {
+      outcome: Exclude<PageReadOutcome, "read" | "tooLittleText">;
+      bodyTruncated?: boolean;
+    };
 
 type HopResult = DownloadResult | { outcome: "redirect"; target: string };
 
@@ -521,9 +524,9 @@ async function readHop(url: URL, deadline: AbortSignal): Promise<HopResult> {
     return { outcome: classifyHttpError(response.status) };
   }
 
-  const contentType = response.headers.get("content-type") ?? "";
-  const isPdf = contentType.trim().toLowerCase().startsWith("application/pdf");
-  if (!READABLE_CONTENT_TYPES.test(contentType.trim()) && !isPdf) {
+  const contentType = response.headers.get("content-type")?.trim() ?? "";
+  const isPdf = contentType.toLowerCase().startsWith("application/pdf");
+  if (!READABLE_CONTENT_TYPES.test(contentType) && !isPdf) {
     await response.body?.cancel().catch(() => {});
     return { outcome: "notADocument" };
   }
@@ -535,22 +538,22 @@ async function readHop(url: URL, deadline: AbortSignal): Promise<HopResult> {
     return { outcome: isTimeout(error) ? "timedOut" : "failed" };
   }
 
-  const { bytes, truncated } = body;
+  const { bytes, truncated: bodyTruncated } = body;
   try {
     if (isPdf) {
       return {
         outcome: "ok",
         text: await extractPdfText(bytes),
-        bodyTruncated: truncated,
+        bodyTruncated,
       };
     }
     return {
       outcome: "ok",
       html: decodeDocument(bytes, contentType),
-      bodyTruncated: truncated,
+      bodyTruncated,
     };
   } catch {
-    return { outcome: "unparsable" };
+    return { outcome: "unparsable", bodyTruncated };
   }
 }
 
@@ -1156,15 +1159,15 @@ async function fetchPageContent(
   const download = await downloadDocument(url, breaker);
 
   if (download.outcome !== "ok") {
-    recordPageRead({ outcome: download.outcome, durationMs: since() });
+    recordPageRead({ ...download, durationMs: since() });
     return null;
   }
 
   const { bodyTruncated } = download;
 
   try {
-    const html = download.text ?? extractReadableText(download.html ?? "");
-    const passages = splitIntoPassages(html);
+    const text = download.text ?? extractReadableText(download.html ?? "");
+    const passages = splitIntoPassages(text);
     const content = passages.join("\n");
     // A PDF has no markup to read a headline out of, so it ranks on the query
     // alone.

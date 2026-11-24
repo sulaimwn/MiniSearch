@@ -859,6 +859,21 @@ describe("page read counters", () => {
     });
   });
 
+  it("counts a truncated PDF even when the remaining bytes cannot be parsed", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(new Uint8Array(1_500_001), {
+        headers: { "content-type": "application/pdf" },
+      }),
+    );
+    pdfGetTextMock.mockRejectedValue(new Error("Incomplete PDF"));
+
+    expect(await countOutcomes("https://example.com/large.pdf")).toEqual({
+      read: 0,
+      skipped: { unparsable: 1 },
+      bodiesTruncated: 1,
+    });
+  });
+
   it("counts a page that yielded almost no text", async () => {
     respondWithHtml("<html><body><p>Accept cookies</p></body></html>");
 

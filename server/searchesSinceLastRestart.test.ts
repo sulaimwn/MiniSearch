@@ -14,6 +14,22 @@ describe("getSearchStats", () => {
     });
   });
 
+  it("averages multiple durations independently for text and image searches", async () => {
+    const { getSearchStats, recordSearchDuration } = await import(
+      "./searchesSinceLastRestart"
+    );
+
+    recordSearchDuration("text", 200);
+    recordSearchDuration("images", 600);
+    recordSearchDuration("text", 1000);
+    recordSearchDuration("images", 200);
+
+    expect(getSearchStats()).toEqual({
+      averageTextualMs: 600,
+      averageGraphicalMs: 400,
+    });
+  });
+
   it("averages only timed text searches and still counts every served search", async () => {
     const {
       getSearchStats,
